@@ -77,3 +77,6 @@ create policy "Public can update app sync"
   to anon
   using (true)
   with check (true);
+
+grant usage on schema public to anon;
+grant select, insert, update on public.app_sync to anon;
