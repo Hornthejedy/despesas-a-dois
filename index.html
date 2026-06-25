@@ -426,6 +426,7 @@
     tbody tr:hover { background: #fbfaf7; }
     td.value { font-weight: 800; }
     td.row-actions { text-align: right; }
+    td.row-actions .btn { margin-left: 6px; }
 
     .empty {
       padding: 44px 18px;
@@ -1072,6 +1073,7 @@
           <td>${expenseStatusHtml(item, settledUntil)}</td>
           <td class="row-actions">
             <button class="btn btn-secondary btn-small" data-action="edit" data-id="${item.id}" type="button">Editar</button>
+            <button class="btn btn-secondary btn-small" data-action="gift" data-id="${item.id}" type="button">${item.isGift ? "Retirar oferta" : "Oferta"}</button>
             <button class="btn btn-danger btn-small" data-action="delete" data-id="${item.id}" type="button">Apagar</button>
           </td>
         </tr>
@@ -1212,6 +1214,19 @@
         submitButton.textContent = "Guardar alteração";
         form.scrollIntoView({ behavior: "smooth", block: "center" });
         placeInput.focus();
+      }
+
+      if (button.dataset.action === "gift") {
+        try {
+          item.isGift = !item.isGift;
+          await updateCloudExpense(item);
+          saveExpenses();
+          render();
+          showToast(item.isGift ? "Despesa marcada como oferta." : "Oferta removida.");
+        } catch {
+          item.isGift = !item.isGift;
+          showToast("Não foi possível atualizar no Supabase.");
+        }
       }
 
       if (button.dataset.action === "delete" && confirm(`Apagar a despesa "${item.place}"?`)) {
