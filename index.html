@@ -515,25 +515,12 @@
     <section class="panel cloud-panel" aria-labelledby="cloud-title">
       <div class="cloud-head">
         <div>
-          <h2 id="cloud-title">Guardar no Supabase</h2>
-          <p>Entra na tua conta para guardar e sincronizar as despesas entre dispositivos. Sem login, continua a guardar neste navegador.</p>
+          <h2 id="cloud-title">Sincronização Supabase</h2>
+          <p>A app carrega automaticamente os dados da cloud e guarda no Supabase sempre que fazes uma alteração.</p>
         </div>
-        <span class="cloud-status" id="cloud-status">Modo local</span>
+        <span class="cloud-status" id="cloud-status">A ligar...</span>
       </div>
-      <form class="cloud-form" id="auth-form">
-        <div>
-          <label for="auth-email">Email</label>
-          <input type="email" id="auth-email" autocomplete="email" placeholder="teu@email.com">
-        </div>
-        <div>
-          <label for="auth-password">Password</label>
-          <input type="password" id="auth-password" autocomplete="current-password" minlength="6" placeholder="Mínimo 6 caracteres">
-        </div>
-        <button class="btn btn-primary" id="login-button" type="submit">Entrar</button>
-        <button class="btn btn-secondary" id="signup-button" type="button">Criar conta</button>
-        <button class="btn btn-secondary" id="logout-button" type="button" hidden>Sair</button>
-      </form>
-      <p class="cloud-user" id="cloud-user"></p>
+      <p class="cloud-user" id="cloud-user">Identificador: despesas_a_dois_principal</p>
     </section>
 
     <section class="panel" aria-labelledby="form-title">
@@ -656,7 +643,7 @@
         </table>
         <div class="empty" id="empty-state">Ainda não existem despesas. Adiciona a primeira no formulário acima.</div>
       </div>
-      <p class="footer-note">Sem login, os dados ficam apenas neste navegador. Com login, ficam guardados no Supabase.</p>
+      <p class="footer-note">Os dados são guardados automaticamente no Supabase. Se estiveres sem internet, a app mantém uma cópia neste navegador.</p>
       <div class="iphone-note" id="iphone-note" hidden>
         <strong>Guardar no iPhone</strong>
         No Safari, toque em Partilhar e depois em “Adicionar ao ecrã principal”. Abra sempre a aplicação por esse ícone.
@@ -670,16 +657,12 @@
   <script>
     const SUPABASE_URL = "https://xotpdjudqhhxhvtyypfc.supabase.co";
     const SUPABASE_PUBLIC_KEY = "sb_publishable_q5VuBvE6Egb1prTpf_Zq4w_nThiBFF0";
+    const SUPABASE_SYNC_KEY = "despesas_a_dois_principal_sync_2026_06_25";
     const STORAGE_KEY = "despesas-casal-v1";
     const SETTLEMENTS_KEY = "despesas-casal-liquidacoes-v1";
     const supabaseClient = window.supabase
       ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLIC_KEY)
       : null;
-    const authForm = document.getElementById("auth-form");
-    const authEmail = document.getElementById("auth-email");
-    const authPassword = document.getElementById("auth-password");
-    const signupButton = document.getElementById("signup-button");
-    const logoutButton = document.getElementById("logout-button");
     const cloudStatus = document.getElementById("cloud-status");
     const cloudUser = document.getElementById("cloud-user");
     const form = document.getElementById("expense-form");
@@ -717,8 +700,8 @@
     let editingId = null;
     let sortColumn = "date";
     let sortDirection = "desc";
-    let currentUser = null;
     let cloudLoaded = false;
+    let cloudSyncing = false;
 
     const currency = new Intl.NumberFormat("pt-PT", {
       style: "currency",
@@ -752,168 +735,130 @@
       cloudStatus.textContent = message;
     }
 
-    function updateAuthUi() {
-      const signedIn = Boolean(currentUser);
-      authEmail.closest("div").hidden = signedIn;
-      authPassword.closest("div").hidden = signedIn;
-      authForm.querySelector("#login-button").hidden = signedIn;
-      signupButton.hidden = signedIn;
-      logoutButton.hidden = !signedIn;
-      cloudUser.textContent = signedIn ? `Ligado como ${currentUser.email}` : "";
-      setCloudStatus(signedIn ? "Ligado ao Supabase" : "Modo local");
-    }
-
-    function expenseFromRow(row) {
-      return {
-        id: row.id,
-        date: row.expense_date,
-        place: row.place,
-        amount: Number(row.amount),
-        isGift: Boolean(row.is_gift),
-        createdAt: row.created_at ? Date.parse(row.created_at) : Date.now()
-      };
-    }
-
-    function settlementFromRow(row) {
-      return {
-        id: row.id,
-        paymentDate: row.payment_date,
-        settledUntil: row.settled_until,
-        amount: Number(row.amount),
-        createdAt: row.created_at ? Date.parse(row.created_at) : Date.now()
-      };
-    }
-
-    function expenseToRow(item) {
-      return {
-        user_id: currentUser.id,
-        expense_date: item.date,
-        place: item.place,
-        amount: item.amount,
-        is_gift: Boolean(item.isGift)
-      };
-    }
-
-    function settlementToRow(item) {
-      return {
-        user_id: currentUser.id,
-        payment_date: item.paymentDate,
-        settled_until: item.settledUntil,
-        amount: item.amount
-      };
-    }
-
     async function loadCloudData() {
-      if (!supabaseClient || !currentUser) return;
+      if (!supabaseClient) {
+        setCloudStatus("Modo local");
+        cloudUser.textContent = "Sem ligação ao Supabase. Os dados ficam neste dispositivo.";
+        return;
+      }
       setCloudStatus("A sincronizar...");
-
       const localExpenses = loadExpenses();
       const localSettlements = loadSettlements();
-      const { data: remoteExpenses, error: expensesError } = await supabaseClient
-        .from("expenses")
-        .select("*")
-        .order("expense_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      const { data: remoteSettlements, error: settlementsError } = await supabaseClient
-        .from("settlements")
-        .select("*")
-        .order("payment_date", { ascending: false })
-        .order("created_at", { ascending: false });
 
-      if (expensesError || settlementsError) {
+      const { data, error } = await supabaseClient
+        .from("app_sync")
+        .select("payload, updated_at")
+        .eq("sync_key", SUPABASE_SYNC_KEY)
+        .maybeSingle();
+
+      if (error) {
         cloudLoaded = false;
         setCloudStatus("Erro na sincronização");
-        showToast("Não foi possível carregar o Supabase. A app continua em modo local.");
+        cloudUser.textContent = "Confirma se a tabela app_sync já existe no Supabase.";
+        showToast("Não foi possível carregar o Supabase.");
         return;
       }
 
-      if (!remoteExpenses.length && localExpenses.length) {
-        await supabaseClient.from("expenses").insert(localExpenses.map(expenseToRow));
-      }
-      if (!remoteSettlements.length && localSettlements.length) {
-        await supabaseClient.from("settlements").insert(localSettlements.map(settlementToRow));
+      if (data && data.payload) {
+        expenses = Array.isArray(data.payload.expenses) ? data.payload.expenses : [];
+        settlements = Array.isArray(data.payload.settlements) ? data.payload.settlements : [];
+        saveExpenses();
+        saveSettlements();
+      } else if (localExpenses.length || localSettlements.length) {
+        expenses = localExpenses;
+        settlements = localSettlements;
+        await syncCloudState();
       }
 
-      const { data: finalExpenses } = await supabaseClient
-        .from("expenses")
-        .select("*")
-        .order("expense_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      const { data: finalSettlements } = await supabaseClient
-        .from("settlements")
-        .select("*")
-        .order("payment_date", { ascending: false })
-        .order("created_at", { ascending: false });
-
-      expenses = (finalExpenses || []).map(expenseFromRow);
-      settlements = (finalSettlements || []).map(settlementFromRow);
       cloudLoaded = true;
-      saveExpenses();
-      saveSettlements();
-      updateAuthUi();
+      setCloudStatus("Ligado ao Supabase");
+      cloudUser.textContent = data?.updated_at
+        ? "Última sincronização: " + new Date(data.updated_at).toLocaleString("pt-PT")
+        : "Dados preparados para sincronização automática.";
       render();
-      showToast("Dados sincronizados com o Supabase.");
+    }
+
+    async function syncCloudState() {
+      if (!supabaseClient || cloudSyncing) return;
+      cloudSyncing = true;
+      setCloudStatus("A guardar...");
+      const payload = {
+        expenses,
+        settlements,
+        savedAt: new Date().toISOString()
+      };
+      const { error } = await supabaseClient
+        .from("app_sync")
+        .upsert({
+          sync_key: SUPABASE_SYNC_KEY,
+          payload,
+          updated_at: new Date().toISOString()
+        }, { onConflict: "sync_key" });
+      cloudSyncing = false;
+      if (error) {
+        setCloudStatus("Erro ao guardar");
+        throw error;
+      }
+      cloudLoaded = true;
+      setCloudStatus("Guardado no Supabase");
+      cloudUser.textContent = "Última sincronização: " + new Date().toLocaleString("pt-PT");
     }
 
     async function createCloudExpense(item) {
-      if (!currentUser || !cloudLoaded) return item;
-      const { data, error } = await supabaseClient
-        .from("expenses")
-        .insert(expenseToRow(item))
-        .select()
-        .single();
-      if (error) throw error;
-      return expenseFromRow(data);
+      const nextExpenses = [...expenses, item];
+      await syncCloudPreview(nextExpenses, settlements);
+      return item;
     }
 
     async function updateCloudExpense(item) {
-      if (!currentUser || !cloudLoaded) return;
-      const { error } = await supabaseClient
-        .from("expenses")
-        .update(expenseToRow(item))
-        .eq("id", item.id);
-      if (error) throw error;
+      await syncCloudState();
     }
 
     async function deleteCloudExpense(id) {
-      if (!currentUser || !cloudLoaded) return;
-      const { error } = await supabaseClient.from("expenses").delete().eq("id", id);
-      if (error) throw error;
+      await syncCloudPreview(expenses.filter(expense => expense.id !== id), settlements);
     }
 
     async function createCloudSettlement(item) {
-      if (!currentUser || !cloudLoaded) return item;
-      const { data, error } = await supabaseClient
-        .from("settlements")
-        .insert(settlementToRow(item))
-        .select()
-        .single();
-      if (error) throw error;
-      return settlementFromRow(data);
+      const nextSettlements = [...settlements, item];
+      await syncCloudPreview(expenses, nextSettlements);
+      return item;
     }
 
     async function deleteCloudSettlement(id) {
-      if (!currentUser || !cloudLoaded) return;
-      const { error } = await supabaseClient.from("settlements").delete().eq("id", id);
-      if (error) throw error;
+      await syncCloudPreview(expenses, settlements.filter(entry => entry.id !== id));
     }
 
     async function clearCloudData() {
-      if (!currentUser || !cloudLoaded) return;
-      const expenseDelete = await supabaseClient.from("expenses").delete().eq("user_id", currentUser.id);
-      const settlementDelete = await supabaseClient.from("settlements").delete().eq("user_id", currentUser.id);
-      if (expenseDelete.error || settlementDelete.error) throw expenseDelete.error || settlementDelete.error;
+      await syncCloudPreview([], []);
+    }
+
+    async function syncCloudPreview(nextExpenses, nextSettlements) {
+      if (!supabaseClient || cloudSyncing) return;
+      cloudSyncing = true;
+      setCloudStatus("A guardar...");
+      const { error } = await supabaseClient
+        .from("app_sync")
+        .upsert({
+          sync_key: SUPABASE_SYNC_KEY,
+          payload: {
+            expenses: nextExpenses,
+            settlements: nextSettlements,
+            savedAt: new Date().toISOString()
+          },
+          updated_at: new Date().toISOString()
+        }, { onConflict: "sync_key" });
+      cloudSyncing = false;
+      if (error) {
+        setCloudStatus("Erro ao guardar");
+        throw error;
+      }
+      cloudLoaded = true;
+      setCloudStatus("Guardado no Supabase");
+      cloudUser.textContent = "Última sincronização: " + new Date().toLocaleString("pt-PT");
     }
 
     async function initSupabase() {
-      if (!supabaseClient) {
-        setCloudStatus("Modo local");
-        return;
-      }
-      const { data } = await supabaseClient.auth.getSession();
-      currentUser = data.session ? data.session.user : null;
-      updateAuthUi();
-      if (currentUser) await loadCloudData();
+      await loadCloudData();
     }
 
     function todayLocal() {
@@ -1110,57 +1055,6 @@
       window.clearTimeout(showToast.timer);
       showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2200);
     }
-
-    authForm.addEventListener("submit", async event => {
-      event.preventDefault();
-      if (!supabaseClient) return;
-      const email = authEmail.value.trim();
-      const password = authPassword.value;
-      if (!email || !password) return;
-      setCloudStatus("A entrar...");
-      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-      if (error) {
-        setCloudStatus("Modo local");
-        showToast("Não foi possível entrar. Confirma o email e a password.");
-        return;
-      }
-      currentUser = data.user;
-      updateAuthUi();
-      await loadCloudData();
-    });
-
-    signupButton.addEventListener("click", async () => {
-      if (!supabaseClient) return;
-      const email = authEmail.value.trim();
-      const password = authPassword.value;
-      if (!email || !password || password.length < 6) {
-        showToast("Indica email e password com pelo menos 6 caracteres.");
-        return;
-      }
-      setCloudStatus("A criar conta...");
-      const { data, error } = await supabaseClient.auth.signUp({ email, password });
-      if (error) {
-        setCloudStatus("Modo local");
-        showToast("Não foi possível criar a conta.");
-        return;
-      }
-      currentUser = data.user;
-      updateAuthUi();
-      if (currentUser) await loadCloudData();
-      showToast("Conta criada. Se o Supabase pedir confirmação, confirma o email.");
-    });
-
-    logoutButton.addEventListener("click", async () => {
-      if (!supabaseClient) return;
-      await supabaseClient.auth.signOut();
-      currentUser = null;
-      cloudLoaded = false;
-      expenses = loadExpenses();
-      settlements = loadSettlements();
-      updateAuthUi();
-      render();
-      showToast("Sessão terminada.");
-    });
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
@@ -1372,7 +1266,6 @@
       showToast("Ficheiro CSV preparado.");
     });
 
-    updateAuthUi();
     render();
     initSupabase();
 
