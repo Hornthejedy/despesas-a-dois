@@ -1,0 +1,19 @@
+{
+  "name": "Despesas a Dois",
+  "short_name": "Despesas",
+  "description": "Registo e liquidação de despesas partilhadas.",
+  "lang": "pt-PT",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f1eb",
+  "theme_color": "#466b5a",
+  "icons": [
+    {
+      "src": "icone.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
